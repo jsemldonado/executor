@@ -1,0 +1,115 @@
+name: Bodega image
+
+# Builds the self-host image from bodega-approval-webhook: one patch commit on an upstream
+# release tag. Daily, it moves that commit onto a newer release when there is one, then builds.
+# This file lives on its own branch because schedules run from the default branch, and
+# GITHUB_TOKEN may not push commits that touch workflows, so the patch branch has none.
+
+on:
+  workflow_dispatch:
+    inputs:
+      upgrade:
+        description: Move the patch onto the newest upstream release before building
+        type: boolean
+        default: false
+  schedule:
+    - cron: "17 9 * * *"
+
+permissions:
+  contents: write
+  packages: write
+  issues: write
+
+concurrency:
+  group: bodega-image
+  cancel-in-progress: false
+
+env:
+  PATCH_BRANCH: bodega-approval-webhook
+  UPSTREAM: https://github.com/UsefulSoftwareCo/executor.git
+  IMAGE: ghcr.io/jsemldonado/executor-selfhost
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PATCH_BRANCH }}
+          fetch-depth: 0
+
+      - name: Plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPGRADE: ${{ github.event_name == 'schedule' || inputs.upgrade }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags "$UPSTREAM" '+refs/tags/executor@*:refs/tags/executor@*'
+          base=$(git describe --tags --abbrev=0 --match 'executor@*' HEAD)
+          latest=$(git -c versionsort.suffix=-beta tag -l 'executor@*' --sort=-v:refname | head -1)
+          build=${{ github.event_name == 'workflow_dispatch' }}
+
+          if [ "$UPGRADE" = true ] && [ "$latest" != "$base" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+            before=$(git rev-parse HEAD)
+            if git rebase --onto "$latest" "$base"; then
+              git push --force-with-lease="$PATCH_BRANCH:$before" origin "HEAD:$PATCH_BRANCH"
+              base=$latest
+              build=true
+            else
+              git rebase --abort
+              title="Patch does not rebase onto $latest"
+              if [ -z "$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[].number')" ]; then
+                gh issue create --title "$title" --body "The approval-webhook patch on \`$PATCH_BRANCH\` (based on \`$base\`) conflicts with upstream \`$latest\`. Rebase it by hand, push the branch, then run this workflow. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+              fi
+              exit 1
+            fi
+          fi
+
+          version=${base#executor@}
+          n=$(( $(git tag -l "bodega/$version-bodega.*" | wc -l) + 1 ))
+          {
+            echo "build=$build"
+            echo "version=$version"
+            echo "tag=$version-bodega.$n"
+          } >> "$GITHUB_OUTPUT"
+          echo "Base $base, newest upstream $latest, build=$build" >> "$GITHUB_STEP_SUMMARY"
+
+      - if: steps.plan.outputs.build == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - if: steps.plan.outputs.build == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - if: steps.plan.outputs.build == 'true'
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/hosted/self-host/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ steps.plan.outputs.tag }}
+          build-args: EXECUTOR_BUILD_VERSION=${{ steps.plan.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.plan.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - if: steps.plan.outputs.build == 'true'
+        name: Record
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          git tag "bodega/$TAG" HEAD
+          git push origin "bodega/$TAG"
+          echo "Pushed \`$IMAGE:$TAG\` as \`$IMAGE@$DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
