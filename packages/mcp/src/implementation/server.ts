@@ -28,6 +28,7 @@ import { callTools, describeCatalog, executeProgram, searchCatalog } from "./exe
 import { decodeSkillsInput, skills } from "./skills.ts";
 import { skillCatalog } from "./skill-catalog.ts";
 import { eventsHandler } from "./events.ts";
+import { approvalWebhook, type ApprovalAnnouncer } from "./approval-webhook.ts";
 import { withOperationSpan } from "./telemetry.ts";
 
 const observeExecution =
@@ -124,15 +125,18 @@ const withSseHeartbeat = (response: HttpServerResponse.HttpServerResponse) => {
   );
 };
 
+// `announce` is passed when the request is new, not when a resume poll shows it again.
 const withLink = (
   result: McpExecutionResult,
   sessionId: string,
   delivery: BrowserDelivery,
+  announce?: ApprovalAnnouncer,
 ): Effect.Effect<BrowserExecutionResult> =>
   result.status === "approval-required" || result.status === "input-required"
-    ? delivery
-        .url({ sessionId, requestId: result.requestId })
-        .pipe(Effect.map((approvalUrl) => ({ ...result, approvalUrl })))
+    ? delivery.url({ sessionId, requestId: result.requestId }).pipe(
+        Effect.tap((approvalUrl) => announce?.(result, approvalUrl) ?? Effect.void),
+        Effect.map((approvalUrl) => ({ ...result, approvalUrl })),
+      )
     : Effect.succeed(result);
 
 export const makeMcp = (options: McpOptions) =>
@@ -142,6 +146,7 @@ export const makeMcp = (options: McpOptions) =>
       options.beforeExecute,
       options.interactions,
     );
+    const announce = yield* approvalWebhook;
     const handler = (mode: ElicitationMode) =>
       Effect.gen(function* () {
         const delivery = options.browser;
@@ -226,7 +231,9 @@ export const makeMcp = (options: McpOptions) =>
                             executions
                               .execute(id, options.backend, executeProgram(code), "result")
                               .pipe(
-                                Effect.flatMap((result) => withLink(result, sessionId, delivery)),
+                                Effect.flatMap((result) =>
+                                  withLink(result, sessionId, delivery, announce),
+                                ),
                               ),
                           ),
                           observeExecution("mcp.execute"),
@@ -237,7 +244,9 @@ export const makeMcp = (options: McpOptions) =>
                             executions
                               .execute(id, options.backend, callTools(input), "result")
                               .pipe(
-                                Effect.flatMap((result) => withLink(result, sessionId, delivery)),
+                                Effect.flatMap((result) =>
+                                  withLink(result, sessionId, delivery, announce),
+                                ),
                               ),
                           ),
                           observeExecution("mcp.call"),
@@ -258,7 +267,7 @@ export const makeMcp = (options: McpOptions) =>
                                   .resume(id, options.backend, { requestId, response })
                                   .pipe(
                                     Effect.flatMap((result) =>
-                                      withLink(result, sessionId, delivery),
+                                      withLink(result, sessionId, delivery, announce),
                                     ),
                                   );
                               const pending = yield* executions.pendingInteraction(id, requestId);
