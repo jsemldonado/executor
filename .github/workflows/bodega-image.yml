@@ -1,7 +1,8 @@
 name: Bodega image
 
 # Builds the self-host image from bodega-approval-webhook: one patch commit on an upstream
-# release tag. Daily, it moves that commit onto a newer release when there is one, then builds.
+# release tag. Hourly, it builds the patch when its head has no image yet, and daily it moves
+# that commit onto a newer release when there is one, then builds.
 # This file lives on its own branch because schedules run from the default branch, and
 # GITHUB_TOKEN may not push commits that touch workflows, so the patch branch has none.
 
@@ -14,6 +15,7 @@ on:
         default: false
   schedule:
     - cron: "17 9 * * *"
+    - cron: "47 * * * *"
 
 permissions:
   contents: write
@@ -43,13 +45,15 @@ jobs:
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-          UPGRADE: ${{ github.event_name == 'schedule' || inputs.upgrade }}
+          UPGRADE: ${{ (github.event_name == 'schedule' && github.event.schedule == '17 9 * * *') || inputs.upgrade }}
         run: |
           set -euo pipefail
+          git fetch --tags origin
           git fetch --no-tags "$UPSTREAM" '+refs/tags/executor@*:refs/tags/executor@*'
           base=$(git describe --tags --abbrev=0 --match 'executor@*' HEAD)
           latest=$(git -c versionsort.suffix=-beta tag -l 'executor@*' --sort=-v:refname | head -1)
           build=${{ github.event_name == 'workflow_dispatch' }}
+          if [ -z "$(git tag --points-at HEAD 'bodega/*')" ]; then build=true; fi
 
           if [ "$UPGRADE" = true ] && [ "$latest" != "$base" ]; then
             git config user.name "github-actions[bot]"
