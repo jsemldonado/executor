@@ -83,7 +83,7 @@ export const approvalWebhook: Effect.Effect<ApprovalAnnouncer | undefined> = set
             tool,
             argsSummary,
             ...(account === "" ? {} : { account }),
-            expiresAt: new Date(pending.expiresAt).toISOString(),
+            expireTime: new Date(pending.expiresAt).toISOString(),
           });
           const id = `msg_${pending.requestId}`;
           const timestamp = String(Math.floor(Date.now() / 1000));
