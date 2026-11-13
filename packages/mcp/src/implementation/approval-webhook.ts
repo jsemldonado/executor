@@ -8,7 +8,14 @@ import type { McpExecutionResult } from "../contracts/execute.ts";
 
 type Pending = Extract<McpExecutionResult, { status: "approval-required" | "input-required" }>;
 
-export type ApprovalAnnouncer = (pending: Pending, approvalUrl: string) => Effect.Effect<void>;
+export type ApprovalAnnouncer = (
+  pending: Pending,
+  approvalUrl: string,
+  appName: string | undefined,
+) => Effect.Effect<void>;
+
+export const appOf = (pending: Pending) =>
+  pending.status === "approval-required" ? pending.invocation.app : pending.tool.app;
 
 const settings = Config.all({
   url: Config.URL("EXECUTOR_APPROVAL_WEBHOOK_URL"),
@@ -35,13 +42,14 @@ const describe = (pending: Pending) => {
   if (pending.status === "approval-required") {
     const { app, tool, input, accounts } = pending.invocation;
     return {
-      tool: `${app}.${tool}`,
+      app,
+      tool,
       argsSummary: argsSummary(input),
       accounts: [accounts.app, accounts.user],
     };
   }
   const { app, tool, accounts } = pending.tool;
-  return { tool: `${app}.${tool}`, argsSummary: "", accounts: [accounts?.app, accounts?.user] };
+  return { app, tool, argsSummary: "", accounts: [accounts?.app, accounts?.user] };
 };
 
 const sign = async (secret: string, id: string, timestamp: string, body: string) => {
@@ -64,12 +72,14 @@ export const approvalWebhook: Effect.Effect<ApprovalAnnouncer | undefined> = set
       onNone: () => undefined,
       onSome:
         ({ url, secret }): ApprovalAnnouncer =>
-        (pending, approvalUrl) => {
-          const { tool, argsSummary, accounts } = describe(pending);
+        (pending, approvalUrl, appName) => {
+          const { app, tool, argsSummary, accounts } = describe(pending);
           const account = accountIds(accounts).join(", ");
           const body = JSON.stringify({
             approvalId: pending.requestId,
             approvalUrl,
+            app,
+            ...(appName === undefined ? {} : { appName }),
             tool,
             argsSummary,
             ...(account === "" ? {} : { account }),
