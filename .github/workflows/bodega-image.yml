@@ -1,7 +1,8 @@
 name: Bodega image
 
 # Builds the self-host image from bodega-approval-webhook: one patch commit on an upstream
-# release tag. On a push to this branch and hourly, it builds the patch when its head has no image yet, and daily it moves
+# release tag. On a push to this branch and hourly, it builds the patch when its head has no image yet
+# (GitHub runs hourly schedules only now and then, so push here to build at once), and daily it moves
 # that commit onto a newer release when there is one, then builds.
 # This file lives on its own branch because schedules run from the default branch, and
 # GITHUB_TOKEN may not push commits that touch workflows, so the patch branch has none.
