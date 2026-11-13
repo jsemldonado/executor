@@ -22,13 +22,14 @@ import {
 } from "../contracts/tools.ts";
 import type { BrowserExecutionResult } from "../contracts/browser-tools.ts";
 import type { BrowserApprovals, BrowserDelivery } from "../contracts/browser.ts";
+import type { McpBackend } from "../contracts/backend.ts";
 import type { McpExecutionResult } from "../contracts/execute.ts";
 import { makeExecutions } from "./executions.ts";
 import { executeNative } from "./native-elicitation.ts";
 import { callTools, describeCatalog, executeProgram, searchCatalog } from "./execute.ts";
 import { decodeSkillsInput, skills } from "./skills.ts";
 import { eventsHandler } from "./events.ts";
-import { approvalWebhook, type ApprovalAnnouncer } from "./approval-webhook.ts";
+import { appOf, approvalWebhook, type ApprovalAnnouncer } from "./approval-webhook.ts";
 import { withOperationSpan } from "./telemetry.ts";
 
 // Observe the final protocol value after timeout, admission and resume handling.
@@ -144,10 +145,19 @@ const withLink = (
   sessionId: string,
   delivery: BrowserDelivery,
   announce?: ApprovalAnnouncer,
+  backend?: McpBackend<Error>,
 ): Effect.Effect<BrowserExecutionResult> =>
   result.status === "approval-required" || result.status === "input-required"
     ? delivery.url({ sessionId, requestId: result.requestId }).pipe(
-        Effect.tap((approvalUrl) => announce?.(result, approvalUrl) ?? Effect.void),
+        Effect.tap((approvalUrl) =>
+          announce === undefined
+            ? Effect.void
+            : (backend?.listApps({ ids: [appOf(result)] }) ?? Effect.succeed([])).pipe(
+                Effect.map((apps) => apps[0]?.name),
+                Effect.orElseSucceed(() => undefined),
+                Effect.flatMap((appName) => announce(result, approvalUrl, appName)),
+              ),
+        ),
         Effect.map((approvalUrl) => ({ ...result, approvalUrl })),
       )
     : Effect.succeed(result);
@@ -247,7 +257,7 @@ export const makeMcp = (options: McpOptions) =>
                               .execute(id, options.backend, executeProgram(code), "result")
                               .pipe(
                                 Effect.flatMap((result) =>
-                                  withLink(result, sessionId, delivery, announce),
+                                  withLink(result, sessionId, delivery, announce, options.backend),
                                 ),
                               ),
                           ),
@@ -260,7 +270,7 @@ export const makeMcp = (options: McpOptions) =>
                               .execute(id, options.backend, callTools(input), "result")
                               .pipe(
                                 Effect.flatMap((result) =>
-                                  withLink(result, sessionId, delivery, announce),
+                                  withLink(result, sessionId, delivery, announce, options.backend),
                                 ),
                               ),
                           ),
@@ -282,7 +292,7 @@ export const makeMcp = (options: McpOptions) =>
                                   .resume(id, options.backend, { requestId, response })
                                   .pipe(
                                     Effect.flatMap((result) =>
-                                      withLink(result, sessionId, delivery, announce),
+                                      withLink(result, sessionId, delivery, announce, options.backend),
                                     ),
                                   );
                               const pending = yield* executions.pendingInteraction(id, requestId);
