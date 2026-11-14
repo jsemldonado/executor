@@ -13,3 +13,8 @@ export * from "./contracts/browser.ts";
 export * from "./contracts/browser-tools.ts";
 
 export * from "./contracts/targets.ts";
+export {
+  interactionWebhook,
+  type Interaction,
+  type InteractionAnnouncer,
+} from "./implementation/interaction-webhook.ts";
