@@ -29,7 +29,12 @@ import { callTools, describeCatalog, executeProgram, searchCatalog } from "./exe
 import { decodeSkillsInput, skills } from "./skills.ts";
 import { skillCatalog } from "./skill-catalog.ts";
 import { eventsHandler } from "./events.ts";
-import { appOf, approvalWebhook, type ApprovalAnnouncer } from "./approval-webhook.ts";
+import {
+  appOf,
+  interactionWebhook,
+  pendingInteraction,
+  type InteractionAnnouncer,
+} from "./interaction-webhook.ts";
 import { withOperationSpan } from "./telemetry.ts";
 
 const observeExecution =
@@ -131,7 +136,7 @@ const withLink = (
   result: McpExecutionResult,
   sessionId: string,
   delivery: BrowserDelivery,
-  announce?: ApprovalAnnouncer,
+  announce?: InteractionAnnouncer,
   backend?: McpBackend<Error>,
 ): Effect.Effect<BrowserExecutionResult> =>
   result.status === "approval-required" || result.status === "input-required"
@@ -142,7 +147,9 @@ const withLink = (
             : (backend?.listApps({ ids: [appOf(result)] }) ?? Effect.succeed([])).pipe(
                 Effect.map((apps) => apps[0]?.name),
                 Effect.orElseSucceed(() => undefined),
-                Effect.flatMap((appName) => announce(result, approvalUrl, appName)),
+                Effect.flatMap((appName) =>
+                  announce(pendingInteraction(result, approvalUrl, appName)),
+                ),
               ),
         ),
         Effect.map((approvalUrl) => ({ ...result, approvalUrl })),
@@ -156,7 +163,7 @@ export const makeMcp = (options: McpOptions) =>
       options.beforeExecute,
       options.interactions,
     );
-    const announce = yield* approvalWebhook;
+    const announce = yield* interactionWebhook;
     const handler = (mode: ElicitationMode) =>
       Effect.gen(function* () {
         const delivery = options.browser;
@@ -277,7 +284,13 @@ export const makeMcp = (options: McpOptions) =>
                                   .resume(id, options.backend, { requestId, response })
                                   .pipe(
                                     Effect.flatMap((result) =>
-                                      withLink(result, sessionId, delivery, announce, options.backend),
+                                      withLink(
+                                        result,
+                                        sessionId,
+                                        delivery,
+                                        announce,
+                                        options.backend,
+                                      ),
                                     ),
                                   );
                               const pending = yield* executions.pendingInteraction(id, requestId);
