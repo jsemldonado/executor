@@ -1,6 +1,7 @@
 /**
- * Optional Standard Webhooks notice for each browser approval link, so another service can push
- * the link to the person who answers it. Delivery never blocks or fails the approval.
+ * Optional Standard Webhooks notice for each request that waits on a person: a browser approval or
+ * input link, or an account connection link, so another service can push it to the person who
+ * answers it. Delivery never blocks or fails the request.
  */
 import { Config, Effect, Option, Redacted } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
@@ -8,18 +9,28 @@ import type { McpExecutionResult } from "../contracts/execute.ts";
 
 type Pending = Extract<McpExecutionResult, { status: "approval-required" | "input-required" }>;
 
-export type ApprovalAnnouncer = (
-  pending: Pending,
-  approvalUrl: string,
-  appName: string | undefined,
-) => Effect.Effect<void>;
+/** One request that waits on a person, as the webhook's body carries it. */
+export interface Interaction {
+  readonly kind: "approval" | "input" | "connect";
+  readonly requestId: string;
+  readonly url: string;
+  readonly app: string;
+  readonly appName?: string | undefined;
+  readonly tool?: string | undefined;
+  readonly argsSummary?: string | undefined;
+  readonly account?: string | undefined;
+  readonly requirement?: string | undefined;
+  readonly expireTime: string;
+}
+
+export type InteractionAnnouncer = (interaction: Interaction) => Effect.Effect<void>;
 
 export const appOf = (pending: Pending) =>
   pending.status === "approval-required" ? pending.invocation.app : pending.tool.app;
 
 const settings = Config.all({
-  url: Config.URL("EXECUTOR_APPROVAL_WEBHOOK_URL"),
-  secret: Config.Redacted("EXECUTOR_APPROVAL_WEBHOOK_SECRET"),
+  url: Config.URL("EXECUTOR_INTERACTION_WEBHOOK_URL"),
+  secret: Config.Redacted("EXECUTOR_INTERACTION_WEBHOOK_SECRET"),
 }).pipe(Config.option);
 
 // Argument names only: values may hold credentials or private content.
@@ -38,18 +49,26 @@ const accountIds = (scopes: ReadonlyArray<object | undefined>) =>
         : String(account),
     );
 
-const describe = (pending: Pending) => {
-  if (pending.status === "approval-required") {
-    const { app, tool, input, accounts } = pending.invocation;
-    return {
-      app,
-      tool,
-      argsSummary: argsSummary(input),
-      accounts: [accounts.app, accounts.user],
-    };
-  }
-  const { app, tool, accounts } = pending.tool;
-  return { app, tool, argsSummary: "", accounts: [accounts?.app, accounts?.user] };
+/** The interaction a paused execution waits on, once its browser link is minted. */
+export const pendingInteraction = (
+  pending: Pending,
+  url: string,
+  appName: string | undefined,
+): Interaction => {
+  const approval = pending.status === "approval-required";
+  const { app, tool, accounts } = approval ? pending.invocation : pending.tool;
+  const account = accountIds([accounts?.app, accounts?.user]).join(", ");
+  return {
+    kind: approval ? "approval" : "input",
+    requestId: pending.requestId,
+    url,
+    app,
+    appName,
+    tool,
+    argsSummary: approval ? argsSummary(pending.invocation.input) : undefined,
+    account: account === "" ? undefined : account,
+    expireTime: new Date(pending.expiresAt).toISOString(),
+  };
 };
 
 const sign = async (secret: string, id: string, timestamp: string, body: string) => {
@@ -65,27 +84,16 @@ const sign = async (secret: string, id: string, timestamp: string, body: string)
   return `v1,${btoa(String.fromCharCode(...new Uint8Array(mac)))}`;
 };
 
-/** Undefined unless EXECUTOR_APPROVAL_WEBHOOK_URL and EXECUTOR_APPROVAL_WEBHOOK_SECRET are both set. */
-export const approvalWebhook: Effect.Effect<ApprovalAnnouncer | undefined> = settings.pipe(
+/** Undefined unless EXECUTOR_INTERACTION_WEBHOOK_URL and EXECUTOR_INTERACTION_WEBHOOK_SECRET are both set. */
+export const interactionWebhook: Effect.Effect<InteractionAnnouncer | undefined> = settings.pipe(
   Effect.map(
     Option.match({
       onNone: () => undefined,
       onSome:
-        ({ url, secret }): ApprovalAnnouncer =>
-        (pending, approvalUrl, appName) => {
-          const { app, tool, argsSummary, accounts } = describe(pending);
-          const account = accountIds(accounts).join(", ");
-          const body = JSON.stringify({
-            approvalId: pending.requestId,
-            approvalUrl,
-            app,
-            ...(appName === undefined ? {} : { appName }),
-            tool,
-            argsSummary,
-            ...(account === "" ? {} : { account }),
-            expireTime: new Date(pending.expiresAt).toISOString(),
-          });
-          const id = `msg_${pending.requestId}`;
+        ({ url, secret }): InteractionAnnouncer =>
+        (interaction) => {
+          const body = JSON.stringify(interaction);
+          const id = `msg_${interaction.requestId}`;
           const timestamp = String(Math.floor(Date.now() / 1000));
           return Effect.promise(() => sign(Redacted.value(secret), id, timestamp, body)).pipe(
             Effect.flatMap((signature) =>
