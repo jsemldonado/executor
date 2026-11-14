@@ -15,6 +15,7 @@ import {
   type Executor,
   type OwnerId,
 } from "@executor-js/sdk/core";
+import { interactionWebhook, type InteractionAnnouncer } from "@executor-js/mcp";
 import { Effect, Schema } from "effect";
 import { HttpApiBuilder } from "effect/http-api";
 import { HostedApi } from "../contracts/api.ts";
@@ -218,6 +219,7 @@ const connect = (
   services: {
     readonly auth: SessionAuthentication["Service"];
     readonly api: BearerAuthentication["Service"];
+    readonly announce: InteractionAnnouncer | undefined;
   },
   scope: AccountScope,
   params: { readonly app: AppId; readonly requirement: string },
@@ -231,11 +233,18 @@ const connect = (
       scope,
       ...payload,
     });
-    return {
-      ...connection,
-      url: yield* connectionUrl(services.auth, services.api, connection.id),
-      redirectUri: accountOAuthRedirectUri(services.auth),
-    };
+    const url = yield* connectionUrl(services.auth, services.api, connection.id);
+    if (services.announce !== undefined)
+      yield* services.announce({
+        kind: "connect",
+        requestId: connection.id,
+        url,
+        app: connection.target.app,
+        appName: connection.target.name,
+        requirement: connection.target.requirement,
+        expireTime: connection.expiresAt.toISOString(),
+      });
+    return { ...connection, url, redirectUri: accountOAuthRedirectUri(services.auth) };
   });
 
 /**
@@ -245,7 +254,11 @@ const connect = (
  */
 export const hostedAppAccountHandlers = HttpApiBuilder.group(HostedApi, "appAccounts", (handlers) =>
   Effect.gen(function* () {
-    const services = { auth: yield* SessionAuthentication, api: yield* BearerAuthentication };
+    const services = {
+      auth: yield* SessionAuthentication,
+      api: yield* BearerAuthentication,
+      announce: yield* interactionWebhook,
+    };
     return handlers
       .handle("appList", ({ params }) =>
         Effect.gen(function* () {
