@@ -71,6 +71,8 @@ export const AppRequirements = Schema.Struct({
   events: DeclaredRequirements.fields.events,
   /** The icons the app declares on `defineApp`, recorded at build without evaluating it. */
   icons: DeclaredRequirements.fields.icons,
+  /** The apps this app's code may call through `ctx.tools`, by slug. */
+  uses: DeclaredRequirements.fields.uses,
 });
 
 export type AppRequirements = typeof AppRequirements.Type;

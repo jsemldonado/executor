@@ -32,7 +32,9 @@ import { makeAccountHealth } from "./account-health.ts";
 import { makeApps } from "./apps.ts";
 import { makeOwners } from "./owners.ts";
 import { makeSchedules } from "./schedules.ts";
-import { makeTools } from "./tools.ts";
+import { makeTools, type InvocationSnapshot } from "./tools.ts";
+import { appCalls } from "./app-calls.ts";
+import type { WorkflowHostControls } from "apps/contracts";
 import { makeSkills } from "./skills.ts";
 import { toEffectRuntime, withTracedPuts } from "./runtime.ts";
 import { database } from "./database.ts";
@@ -121,6 +123,11 @@ export const createExecutor = (
       declarations,
       options.workflows,
     );
+    // Host controls an invocation may use: its app's workflows, and calls to the apps it uses.
+    const controls = (state: InvocationSnapshot): WorkflowHostControls => ({
+      ...workflows.controls(state),
+      call: appCalls(state, (input, options) => tools.call(input, options)),
+    });
     const webhooks = makeWebhooks(
       options.database,
       runtime,
@@ -129,7 +136,7 @@ export const createExecutor = (
       crypto,
       options.webhookOrigin ?? options.origin,
       declarations,
-      workflows.controls,
+      controls,
       options.hooks,
     );
     const apps = {
@@ -163,7 +170,7 @@ export const createExecutor = (
         policy: toolListings,
         search,
       }),
-      workflows.controls,
+      controls,
       options.hooks,
     );
     const connections = makeAccountConnections(db, credentials, crypto, options.hooks);
@@ -311,7 +318,7 @@ export const createExecutor = (
         oauth.resolveSelected,
         runtime,
         options.hostApi,
-        workflows.controls,
+        controls,
       ),
       tools: { ...tools, search: search.page },
     };

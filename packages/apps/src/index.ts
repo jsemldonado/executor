@@ -370,6 +370,7 @@ export {
 export type { OperationContext } from "./contracts/operations.ts";
 
 export { workflow, type Workflow, type WorkflowDeclaration } from "./implementation/workflows.ts";
+export { AppCallFailure, type AppTools, type AppToolPath } from "./contracts/app-calls.ts";
 export {
   NonRetryableError,
   WorkflowFailure,

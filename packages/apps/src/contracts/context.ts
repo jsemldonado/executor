@@ -22,6 +22,8 @@ export interface AppRequirements {
    * is base64 `data:image/...` or an `https:` URL; at most 8 icons and 32 KiB in total.
    */
   readonly icons?: ReadonlyArray<AppIcon>;
+  /** Apps this app calls through `ctx.tools`, by slug. A call to any other app is refused. */
+  readonly uses?: ReadonlyArray<string>;
 }
 
 /** One scope's requirements; none when the app declares none in it. */
@@ -72,6 +74,8 @@ export type MutationContext<
   Scope extends AccountScope = "user",
 > = Omit<AppContext<Requirements, Scope>, "workflows"> & {
   readonly workflows: WorkflowControls;
+  /** Tools of the apps declared in `uses`, run as this call's caller: `ctx.tools.<app>.<tool>(input)`. */
+  readonly tools: import("./app-calls.ts").AppTools;
 } & StorageContext<true> &
   EventsContext<Requirements>;
 

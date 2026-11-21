@@ -11,6 +11,9 @@ import {
   type WorkflowExecution,
   type WorkflowHostControls,
   type WorkflowRpc,
+  AppCallCommand,
+  AppCallFailure,
+  AppCallReply,
 } from "apps/contracts";
 import { repeatedSleep } from "./workflow-engine-calls.ts";
 import { untilTime } from "./sleep-until.ts";
@@ -137,6 +140,7 @@ export const invocationWorkflowControls = (controls: WorkflowHostControls, signa
       Effect.runPromiseWith(services)(
         reply(
           Effect.gen(function* () {
+            if (isAppCall(input)) return yield* appCall(controls, input);
             const command = yield* Schema.decodeUnknownEffect(WorkflowControlCommand)(input).pipe(
               Effect.mapError((error) => invalidControl(input, error)),
             );
@@ -168,3 +172,36 @@ export const invocationWorkflowControls = (controls: WorkflowHostControls, signa
         { signal },
       );
   });
+
+const isAppCall = (input: unknown) =>
+  typeof input === "object" && input !== null && "operation" in input && input.operation === "call";
+/**
+ * One `ctx.tools` call: the target's output or the host's refusal, both as a successful reply so
+ * the app reads the reason.
+ */
+const appCall = (controls: WorkflowHostControls, input: unknown) =>
+  Schema.decodeUnknownEffect(AppCallCommand)(input).pipe(
+    Effect.mapError(
+      () =>
+        new AppCallFailure({
+          reason: "input",
+          message: "ctx.tools takes one JSON object as its input.",
+        }),
+    ),
+    Effect.flatMap((command) =>
+      controls.call === undefined
+        ? Effect.fail(
+            new AppCallFailure({
+              reason: "unavailable",
+              message: "This invocation cannot call other apps.",
+            }),
+          )
+        : controls.call(command),
+    ),
+    Effect.matchEffect({
+      onSuccess: (value) => Effect.succeed({ ok: true as const, value }),
+      onFailure: (error) => Effect.succeed({ ok: false as const, error }),
+    }),
+    Effect.flatMap(Schema.encodeEffect(AppCallReply)),
+    Effect.withSpan("app.call"),
+  );

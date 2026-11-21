@@ -23,12 +23,14 @@ import {
   type DurableDeclarations,
   type Executor,
   type RepositoryBackend,
+  AppCallAuthority,
 } from "@executor-js/sdk/core";
 import {
   HostedBackground,
   HostedExecutor,
   ScheduledAuthority,
   makeScheduledAuthority,
+  makeAppCallAuthority,
   OrganizationIcons,
   makeOrganizationIcons,
   OrganizationDefaults,
@@ -227,6 +229,7 @@ export const selfHostExecutorServices = <E, R>(
         false,
       );
       const scheduleAuthority = yield* makeScheduledAuthority(executor);
+      const appCallAuthority = yield* makeAppCallAuthority(executor);
       // Records and wakes setup only inside requests that carry this instance's analytics sink
       // and schedule wake.
       const hosted = withDeploySetupWake(withExecutorAnalytics(executor));
@@ -240,6 +243,7 @@ export const selfHostExecutorServices = <E, R>(
         Layer.succeed(SelfHostRegistry, readRegistry),
         Layer.succeed(SelfHostAuth, auth),
         Layer.succeed(ScheduledAuthority, scheduleAuthority),
+        Layer.succeed(AppCallAuthority, appCallAuthority),
         Layer.succeed(GroupDatabase, Effect.succeed(groupDatabase)),
         Layer.succeed(OrganizationIcons, makeOrganizationIcons(blobs)),
         // Self-host serves Git, like everything else, on its one origin.

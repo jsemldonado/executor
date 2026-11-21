@@ -1,3 +1,4 @@
+import type { AppCallHostControls } from "./app-calls.ts";
 /** Portable workflow declarations, run views and durable execution capabilities. */
 import { withLegacyKeys } from "@executor-js/utils/legacy-keys";
 import { Schema, type Effect } from "effect";
@@ -323,6 +324,11 @@ export interface WorkflowHostControls {
   readonly terminate: (
     input: Parameters<WorkflowControls["terminate"]>[0],
   ) => Effect.Effect<WorkflowRun, WorkflowFailure>;
+  /**
+   * Runs `ctx.tools` calls over the same private channel, set only where the host lets this
+   * invocation call other apps.
+   */
+  readonly call?: AppCallHostControls["call"];
 }
 /** Serializable requests do not contain an app ID; authority is captured in the supplied capability. */
 export const WorkflowControlCommand = Schema.Union([

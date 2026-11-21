@@ -24,6 +24,7 @@ import {
   type WorkflowHostControls,
 } from "./workflows.ts";
 export * from "./workflows.ts";
+export * from "./app-calls.ts";
 export * from "./failure.ts";
 import { DatabaseFieldReserved, DatabaseLimitExceeded } from "@executor-js/app-data/contracts";
 export { DatabaseFieldReserved, DatabaseLimitExceeded } from "@executor-js/app-data/contracts";
@@ -217,6 +218,8 @@ export interface HostContext {
   readonly files?: readonly SkillFile[];
   /** Private delivery capability. It is never accepted in public request JSON or stored in a build. */
   readonly workflowControls?: WorkflowHostControls;
+  /** Private capability behind `ctx.tools`; never accepted in public request JSON. */
+  readonly appCalls?: import("./app-calls.ts").AppCallHostControls;
   readonly workflow?: WorkflowExecution;
   readonly replay?: WorkflowReplay;
   readonly elicitation?: ElicitationHandler;

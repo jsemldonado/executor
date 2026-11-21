@@ -4,6 +4,12 @@ import { accountProviderError, httpProviderError, parseProviderError } from "./p
 import { ResponseStatusError } from "../contracts/http.ts";
 import { OpenapiResponseError } from "../contracts/api-response-error.ts";
 import { toPromise } from "./authoring.ts";
+import {
+  AppCallFailure,
+  type AppCallCommand,
+  type AppToolPath,
+  type AppTools,
+} from "../contracts/app-calls.ts";
 import type { WorkflowControls, WorkflowReads } from "../contracts/workflows.ts";
 import {
   WorkflowFailure,
@@ -229,6 +235,7 @@ function requirements(
   sql: boolean,
   events: Readonly<Record<string, AppEvent>> | undefined,
   icons: AppIcons | undefined,
+  uses: ReadonlyArray<string> | undefined,
 ) {
   return Effect.gen(function* () {
     return yield* Schema.decodeUnknownEffect(DeclaredRequirements)({
@@ -250,6 +257,7 @@ function requirements(
             ),
           }),
       ...(icons === undefined ? {} : { icons }),
+      ...(uses === undefined ? {} : { uses }),
     }).pipe(
       Effect.mapError((cause) =>
         declarationInvalid("The app's account declarations are invalid", cause),
@@ -438,7 +446,13 @@ function dispatch(
       const secrets = accountSecrets(context.accounts);
       // The build's migrations, not a flag, decide whether the app has a database.
       const ownsSql = hasMigrations(context.files ?? []);
-      const declared = yield* requirements(native.accounts, ownsSql, native.events, native.icons);
+      const declared = yield* requirements(
+        native.accounts,
+        ownsSql,
+        native.events,
+        native.icons,
+        native.uses,
+      );
       if (request.operation === "requirements")
         return yield* safe(
           () => Schema.decodeUnknownEffect(JsonValue)(declared),
@@ -596,6 +610,34 @@ function dispatch(
         get: workflowControls.get,
         list: workflowControls.list,
       };
+      const callApp = toPromise(
+        (command: AppCallCommand) =>
+          context.appCalls === undefined
+            ? Effect.fail(
+                new AppCallFailure({
+                  reason: "unavailable",
+                  message: "This host runs no calls to other apps.",
+                }),
+              )
+            : context.appCalls.call(command),
+        invocationSignal,
+        telemetry.context,
+      );
+      const toolPath = (app: string, path: ReadonlyArray<string>): AppToolPath =>
+        new Proxy(function () {} as unknown as AppToolPath, {
+          get: (_target, key) =>
+            typeof key === "string" && key !== "then" ? toolPath(app, [...path, key]) : undefined,
+          apply: (_target, _self, args: ReadonlyArray<unknown>) =>
+            path.length === 0
+              ? Promise.reject(
+                  new TypeError(`Name a tool of ${app}, such as tools.${app}.search().`),
+                )
+              : callApp({ app, tool: path.join("."), input: (args[0] ?? {}) as JsonValue }),
+        });
+      const appTools: AppTools = new Proxy({} as AppTools, {
+        get: (_target, key) =>
+          typeof key === "string" && key !== "then" ? toolPath(key, []) : undefined,
+      });
       const files = yield* Schema.decodeUnknownEffect(Schema.Array(SkillFile))(
         context.files ?? [],
       ).pipe(Effect.mapError(() => new HostDeclarationInvalid()));
@@ -819,6 +861,7 @@ function dispatch(
             app: bound.app,
             ...(bound.user === undefined ? {} : { user: bound.user }),
             workflows: workflowControls,
+            tools: appTools,
             signal: bound.signal,
             fetch: bound.fetch,
             sql: session.writer,
@@ -928,7 +971,7 @@ function dispatch(
                   fetch,
                   workflows: kind === "mutate" ? workflowControls : workflowReads,
                   sql: kind === "mutate" ? session.writer : session.reader,
-                  ...(kind === "mutate" ? { events: emitter() } : {}),
+                  ...(kind === "mutate" ? { events: emitter(), tools: appTools } : {}),
                 },
                 input,
               )

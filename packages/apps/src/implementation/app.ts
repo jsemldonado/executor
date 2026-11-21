@@ -327,6 +327,9 @@ export const defineApp = <
     ...(requirements.icons === undefined || requirements.icons.length === 0
       ? {}
       : { icons: requirements.icons }),
+    ...(requirements.uses === undefined || requirements.uses.length === 0
+      ? {}
+      : { uses: requirements.uses }),
     evaluate: (context) =>
       factory(context).pipe(Effect.map((value) => adaptDefinition<Requirements, Def>(value))),
   };

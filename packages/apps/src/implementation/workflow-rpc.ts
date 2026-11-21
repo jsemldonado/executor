@@ -1,6 +1,7 @@
 /** RPC adapters expose only parsed values and safe failures to isolated app code. */
 import { Cause, Effect, Redacted, Schema } from "effect";
 import { ResolvedAccounts } from "../contracts/host.ts";
+import { AppCallFailure, AppCallReply, type AppCallHostControls } from "../contracts/app-calls.ts";
 import {
   WorkflowFailure,
   WorkflowRpcCommand,
@@ -149,3 +150,44 @@ export const isolatedWorkflowControls = (
     list: (input) => request({ operation: "list", ...input }, WorkflowRunPage),
   };
 };
+
+/**
+ * `ctx.tools` over the invocation's control channel. A call the host did not answer may have run,
+ * so it is reported as `execution` and never sent again.
+ */
+export const isolatedAppCalls = (
+  deliver: (input: unknown) => Promise<unknown>,
+): AppCallHostControls => ({
+  call: (command) =>
+    // oxlint-disable-next-line executor/authored-code-through-adapter -- the host's control RPC
+    Effect.tryPromise({
+      try: () => deliver({ operation: "call", ...command }),
+      catch: () => unansweredCall(command.app, command.tool),
+    }).pipe(
+      Effect.flatMap((reply) =>
+        Schema.decodeUnknownEffect(WorkflowRpcResult)(reply).pipe(
+          Effect.mapError(() => unansweredCall(command.app, command.tool)),
+        ),
+      ),
+      Effect.flatMap((result) =>
+        result.ok
+          ? Schema.decodeUnknownEffect(AppCallReply)(result.value).pipe(
+              Effect.mapError(() => unansweredCall(command.app, command.tool)),
+            )
+          : Effect.fail(
+              new AppCallFailure({
+                reason: "unavailable",
+                message: "This host runs no calls to other apps.",
+              }),
+            ),
+      ),
+      Effect.flatMap((reply) =>
+        reply.ok ? Effect.succeed(reply.value) : Effect.fail(reply.error),
+      ),
+    ),
+});
+const unansweredCall = (app: string, tool: string) =>
+  new AppCallFailure({
+    reason: "execution",
+    message: `Executor did not answer the call to ${app}.${tool}, which may have run. Check its effect before calling it again.`,
+  });

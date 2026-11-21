@@ -25,6 +25,7 @@ export * from "./markdown.ts";
 
 export * from "./schedules.ts";
 export * from "./scheduler.ts";
+export * from "./app-calls.ts";
 export * from "./source.ts";
 export * from "./public-files.ts";
 export * from "./registry.ts";

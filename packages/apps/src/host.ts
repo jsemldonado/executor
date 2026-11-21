@@ -128,4 +128,5 @@ export const isolatedElicitation =
 export {
   isolatedWorkflowExecution,
   isolatedWorkflowControls,
+  isolatedAppCalls,
 } from "./implementation/workflow-rpc.ts";

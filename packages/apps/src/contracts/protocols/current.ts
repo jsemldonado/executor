@@ -33,6 +33,7 @@ import { AccountCheckResult, OAuth2Config } from "../provider.ts";
 import { ProviderError } from "../provider-error.ts";
 import { RouterIcon } from "../router.ts";
 import { AppIcons } from "../icons.ts";
+import { DeclaredUses } from "../app-calls.ts";
 import { Placements } from "../placement.ts";
 import { OperationSchedule } from "../schedules.ts";
 import { AccountId, JsonObject, JsonValue } from "../schema.ts";
@@ -236,6 +237,8 @@ export const DeclaredRequirements = Schema.Struct({
   events: Schema.optionalKey(DeclaredEvents),
   /** The icons the app declares, so a host shows them without evaluating the app. */
   icons: Schema.optionalKey(AppIcons),
+  /** Apps the app calls through `ctx.tools`, by slug; the host refuses calls to any other. */
+  uses: Schema.optionalKey(DeclaredUses),
 });
 /** Parsed declared account requirements. */
 export type DeclaredRequirements = typeof DeclaredRequirements.Type;

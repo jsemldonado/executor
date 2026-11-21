@@ -10117,6 +10117,17 @@ export const scenarios = plan({
       local: na("This scenario uses hosted memberships, API keys and MCP."),
     },
   },
+  appCalls: {
+    fixtures: "actors",
+    file: "app-calls.spec.ts",
+    title:
+      "an app calls the tools of an app it declares in uses and is refused, with a reason, for an app it does not",
+    targets: {
+      "self-host": scheduled,
+      cloud: scheduled,
+      local: na("This scenario uses hosted app management routes."),
+    },
+  },
   workflowControls: {
     fixtures: "actors",
     file: "workflow-controls.spec.ts",
