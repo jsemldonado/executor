@@ -10128,6 +10128,17 @@ export const scenarios = plan({
       local: na("This scenario uses hosted app management routes."),
     },
   },
+  appCallApproval: {
+    fixtures: "actors",
+    file: "app-calls.spec.ts",
+    title:
+      "an app's call to a tool that needs approval asks the person through the caller's prompt, and is refused when nobody can be asked",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Shared MCP path; covered on self-host"),
+      local: na("This scenario uses hosted app management routes."),
+    },
+  },
   workflowControls: {
     fixtures: "actors",
     file: "workflow-controls.spec.ts",

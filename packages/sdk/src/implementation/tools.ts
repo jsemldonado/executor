@@ -942,7 +942,10 @@ export const makeTools = (
   credentials: Credentials,
   crypto: HostCrypto,
   listings: Listings,
-  workflows?: (state: InvocationSnapshot) => WorkflowHostControls,
+  workflows?: (
+    state: InvocationSnapshot,
+    elicitation?: ToolInvocationOptions["elicitation"],
+  ) => WorkflowHostControls,
   lifecycle?: ResourceLifecycle,
 ) => {
   const db = database(storage);
@@ -1820,7 +1823,9 @@ export const makeTools = (
               toolError = false;
               return runtime.call({
                 app: state.app.id,
-                ...(workflows === undefined ? {} : { workflowControls: workflows(state) }),
+                ...(workflows === undefined
+                  ? {}
+                  : { workflowControls: workflows(state, options?.elicitation) }),
                 build: state.version.build,
                 hostApi: listings.hostApi(state.version),
                 database: ownsDatabase(state.version.requirements),
@@ -1998,7 +2003,7 @@ export const makeTools = (
                           app: saved.app,
                           ...(workflows === undefined
                             ? {}
-                            : { workflowControls: workflows(state) }),
+                            : { workflowControls: workflows(state, options?.elicitation) }),
                           build: state.version.build,
                           hostApi: listings.hostApi(state.version),
                           database: ownsDatabase(state.version.requirements),

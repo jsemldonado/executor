@@ -11,6 +11,7 @@ import { Actors } from "../support/actors.ts";
 import { HostedLive, withHostedCase } from "../support/case.ts";
 import { App } from "../support/contracts.ts";
 import { appsManifest } from "../support/apps-release.ts";
+import { McpClient } from "../support/mcp-client.ts";
 
 const target = `import { defineApp, mutation, query, number, object, router } from "apps";
 const double = query({ input: object({ n: number() }) }, async (_ctx, input) => ({ doubled: input.n * 2 }));
@@ -36,6 +37,23 @@ const missing = mutation({ input: object({}) }, (ctx) =>
 const elsewhere = mutation({ input: object({ app: string() }) }, (ctx, input) =>
   settle(() => ctx.tools[input.app].double({ n: 1 })));
 export default defineApp({ uses: ${uses} }, { tools: router({ combine, missing, elsewhere }) });`;
+
+const gated = `import { defineApp, mutation, object, string, router } from "apps";
+import { always } from "apps/operations/approval";
+const review = mutation({ input: object({ note: string() }), approval: always() }, async (_ctx, input) => ({ reviewed: input.note }));
+export default defineApp({}, { tools: router({ review }) });`;
+
+const relay = (slug: string) => `import { defineApp, mutation, object, string, router } from "apps";
+const relay = mutation({ input: object({ note: string() }) }, async (ctx, input) => {
+  try { return { ok: await ctx.tools[${JSON.stringify(slug)}].review({ note: input.note }) }; }
+  catch (error: any) { return { failed: { tag: error?._tag ?? null, reason: error?.reason ?? null, message: error?.message ?? "" } }; }
+});
+export default defineApp({ uses: [${JSON.stringify(slug)}] }, { tools: router({ relay }) });`;
+
+const Executed = Schema.Struct({
+  status: Schema.Literal("completed"),
+  execution: Schema.Struct({ ok: Schema.Boolean, value: Schema.optional(Schema.Unknown) }),
+});
 
 const Settled = Schema.Union([
   Schema.Struct({ ok: Schema.Json }),
@@ -116,6 +134,92 @@ layer(HostedLive, { excludeTestServices: true })("App calls", (it) => {
           },
         });
       }),
+    ),
+  );
+
+  it.effect(scenarios.appCallApproval.title, (context) =>
+    withHostedCase(
+      context,
+      Effect.gen(function* () {
+        const api = yield* Api,
+          actors = yield* Actors,
+          mcp = yield* McpClient;
+        const prefix = `/api/organizations/${actors.organization.id}`;
+        const apps: string[] = [];
+        yield* Effect.addFinalizer(() =>
+          Effect.gen(function* () {
+            for (const app of apps.toReversed())
+              yield* api.request(actors.owner, "DELETE", `${prefix}/apps/${app}`);
+          }).pipe(Effect.orDie),
+        );
+        const deploy = (label: string, content: string) =>
+          Effect.gen(function* () {
+            const deployed = yield* api.request(actors.owner, "POST", `${prefix}/apps/deploy`, {
+              name: `${label} ${randomUUID().slice(0, 8)}`,
+              files: [{ path: "index.ts", content }, appsManifest],
+            });
+            expect(deployed.status, JSON.stringify(deployed.body)).toBe(200);
+            const app = yield* body(App, deployed);
+            apps.push(app.id);
+            return app;
+          });
+        const reviewer = yield* deploy("Gated target", gated);
+        const relayer = yield* deploy("Gated caller", relay(reviewer.slug));
+
+        // A call with nobody to ask, as the API key's direct call, is refused with its reason.
+        const direct = yield* api.request(
+          actors.owner,
+          "POST",
+          `${prefix}/apps/${relayer.id}/tools/call`,
+          { tool: "relay", kind: "mutation", input: { note: "unasked" } },
+        );
+        expect(direct.status, JSON.stringify(direct.body)).toBe(200);
+        expect(yield* body(Settled, direct)).toEqual({
+          failed: {
+            tag: "AppCallFailure",
+            reason: "approval",
+            message: expect.stringContaining("nobody is here to ask"),
+          },
+        });
+
+        // Through MCP, the person running the caller is asked, in the caller's own prompt.
+        const key = yield* body(
+          Schema.Struct({ id: Schema.String, key: Schema.RedactedFromValue(Schema.String) }),
+          yield* api.request(actors.owner, "POST", "/api/auth/api-key/create", {
+            name: "App call approval",
+          }),
+        );
+        yield* Effect.addFinalizer(() =>
+          api
+            .request(actors.owner, "POST", "/api/auth/api-key/delete", { keyId: key.id })
+            .pipe(Effect.orDie),
+        );
+        const client = yield* mcp.connect(key.key, "app-call-approval", {
+          organization: actors.organization.id,
+          mode: "native",
+        });
+        const result = yield* client.use(
+          "Run a caller whose target needs approval",
+          (client, signal) =>
+            client.callTool(
+              {
+                name: "execute",
+                arguments: {
+                  code: `return await tools[${JSON.stringify(relayer.slug)}].relay({ note: "asked" })`,
+                },
+              },
+              undefined,
+              { signal },
+            ),
+        );
+        const executed = yield* Schema.decodeUnknownEffect(Executed)(result.structuredContent);
+        expect(executed.execution).toMatchObject({
+          ok: true,
+          value: { ok: { reviewed: "asked" } },
+        });
+        const prompts = yield* client.prompts;
+        expect(prompts).toEqual([expect.stringContaining(`wants to call ${reviewer.slug}.review`)]);
+      }).pipe(Effect.provide(McpClient.layer)),
     ),
   );
 });

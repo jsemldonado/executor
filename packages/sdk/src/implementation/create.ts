@@ -34,6 +34,7 @@ import { makeOwners } from "./owners.ts";
 import { makeSchedules } from "./schedules.ts";
 import { makeTools, type InvocationSnapshot } from "./tools.ts";
 import { appCalls } from "./app-calls.ts";
+import type { ToolInvocationOptions } from "../contracts/tools.ts";
 import type { WorkflowHostControls } from "apps/contracts";
 import { makeSkills } from "./skills.ts";
 import { toEffectRuntime, withTracedPuts } from "./runtime.ts";
@@ -124,9 +125,19 @@ export const createExecutor = (
       options.workflows,
     );
     // Host controls an invocation may use: its app's workflows, and calls to the apps it uses.
-    const controls = (state: InvocationSnapshot): WorkflowHostControls => ({
+    const controls = (
+      state: InvocationSnapshot,
+      elicitation?: ToolInvocationOptions["elicitation"],
+    ): WorkflowHostControls => ({
       ...workflows.controls(state),
-      call: appCalls(state, (input, options) => tools.call(input, options)),
+      call: appCalls(
+        state,
+        {
+          call: (input, options) => tools.call(input, options),
+          resume: (input, options) => tools.resume(input, options),
+        },
+        elicitation,
+      ),
     });
     const webhooks = makeWebhooks(
       options.database,
